@@ -25,10 +25,6 @@ FAnimNode_VrmVMC::FAnimNode_VrmVMC()
 
 FAnimNode_VrmVMC::~FAnimNode_VrmVMC()
 {
-	//if (bCreateServer == false) return;
-	//UVRM4U_VMCSubsystem* subsystem = GEngine->GetEngineSubsystem<UVRM4U_VMCSubsystem>();
-	//if (subsystem == nullptr) return;
-	//subsystem->DestroyVMCServer(ServerAddress, Port);
 }
 
 
@@ -122,11 +118,24 @@ void FAnimNode_VrmVMC::EvaluateSkeletalControl_AnyThread(FComponentSpacePoseCont
 	TArray<FBoneTransform> tmpOutTransform;
 
 	FVMCData VMCData;
-	if (subsystem->GetVMCData(VMCData, ServerAddress, Port) == false) {
+	if (subsystem->CopyVMCData(VMCData, ServerAddress, Port) == false) {
 		return;
 	}
+
+	if (VMCData.BoneData.Num() == 0 && VMCData.CurveData.Num() == 0) {
+		return;
+	}
+	if (bApplyPerfectSync) {
+		for (auto& c : VMCData.CurveData) {
+			if (c.Key.Contains(TEXT("BlendShape.")) == false) continue;
+
+			c.Key.RightChopInline(11); // [blendahape.]
+		}
+	}
+
 	TMap<FString, FTransform>& BoneTrans = VMCData.BoneData;
 
+	const auto &MorphList = Output.AnimInstanceProxy->GetSkelMeshComponent()->GetSkinnedAsset()->GetMorphTargets();
 	for (auto& c : VMCData.CurveData) {
 #if	UE_VERSION_OLDER_THAN(5,3,0)
 		{
@@ -138,7 +147,19 @@ void FAnimNode_VrmVMC::EvaluateSkeletalControl_AnyThread(FComponentSpacePoseCont
 			Output.Curve.Set(NewUID, c.Value);
 		}
 #else
-		Output.Curve.Set(*c.Key, c.Value);
+		auto m = MorphList.FindByPredicate([&c](const TObjectPtr<UMorphTarget> &m) {
+			FString s = c.Key;
+
+			if (m->GetName().Compare(s, ESearchCase::IgnoreCase)) {
+				return false;
+			}
+			return true;
+		});
+		if (m) {
+			Output.Curve.Set(*m->GetName(), c.Value);
+		} else {
+			Output.Curve.Set(*c.Key, c.Value);
+		}
 #endif
 	}
 
